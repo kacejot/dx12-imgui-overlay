@@ -6,7 +6,12 @@ add_subdirectory(deps/pluginloader)
 add_subdirectory(deps/s2-hooking)
 add_subdirectory(deps/imgui)
 
-add_library(${PROJECT_NAME} STATIC src/overylay.cpp)
+file(GLOB sources
+    ${CMAKE_SOURCE_DIR}/src/*.cpp
+    ${CMAKE_SOURCE_DIR}/src/*.h
+)
+
+add_library(${PROJECT_NAME} STATIC ${sources})
 
 target_link_libraries(${PROJECT_NAME} PUBLIC
     minhook

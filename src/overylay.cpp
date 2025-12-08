@@ -4,54 +4,11 @@
 #include <dxgi1_2.h>
 
 #include "hooking.h"
+#include "dxgi_hooking.h"
 
-#include <imgui.h>
-#include <backends/imgui_impl_dx11.h>
-#include <backends/imgui_impl_win32.h>
-
-#include <thread>
-#include <chrono>
-#include <fstream>
-#include <format>
 #include <filesystem>
 
-using namespace std::chrono_literals;
-
-// --------------------------------------------------------
-// Лог
-// --------------------------------------------------------
-
-std::ofstream g_log("s2_overlay_log.txt", std::ios::out | std::ios::trunc);
-
-#define LOG(fmt, ...)                                                    \
-    do {                                                                 \
-        if (g_log) {                                                     \
-            auto _msg = std::format(fmt, ##__VA_ARGS__);                 \
-            g_log << _msg << std::endl;                                  \
-            g_log.flush();                                               \
-        }                                                                \
-    } while (0)
-
-// --------------------------------------------------------
-// Typedef'ы и глобалы
-// --------------------------------------------------------
-
-
 HMODULE g_dxgi_handle = nullptr;
-
-enum function_id_t : uint64_t
-{
-    CREATE_DXGI_FACTORY = 0,
-    CREATE_DXGI_FACTORY1 = 1,
-    CREATE_DXGI_FACTORY2 = 2,
-    IDXGI_FACTORY_CREATE_SWAP_CHAIN = 3, 
-    IDXGI_FACTORY1_CREATE_SWAP_CHAIN = 4,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN = 5,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND = 6,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW = 7,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION = 8,
-    DXGI_SWAP_CHAIN_PRESENT
-};
 
 bool is_inside_module(void* addr, HMODULE expectedModule)
 {
@@ -65,7 +22,6 @@ bool is_inside_module(void* addr, HMODULE expectedModule)
     if (expectedModule && actualModule && expectedModule == actualModule)
         return true;
 
-    // Если модули не совпадают, выводим отладку
     char filename[MAX_PATH]{};
     GetModuleFileNameA(actualModule, filename, MAX_PATH);
 
@@ -73,28 +29,48 @@ bool is_inside_module(void* addr, HMODULE expectedModule)
     return false;
 }
 
-class Main
+class dxgi_hooking
 {
 public:
 
-    Main() : m_hooking(0)
+	dxgi_hooking(hooking& hk) : m_hooking(hk), dxgi_swap_chain_present(hk)
     {
     }
 
     hooking m_hooking;
+	dxgi_swap_chain_present_hook dxgi_swap_chain_present;
 };
 
-Main* g_main;
+struct master
+{
+    master() : hk(0), hk_dxgi(hk)
+    {
+    }
 
-bool check(void* addr, function_id id)
+    static master& get()
+    {
+        static master instance;
+        return instance;
+    }
+
+    hooking hk;
+    dxgi_hooking hk_dxgi;
+};
+
+dxgi_hooking& get_hk()
+{
+    return master::get().hk_dxgi;
+}
+
+bool check(void* addr, function_id_t id)
 {
     if (!is_inside_module(addr, g_dxgi_handle))
     {
-        LOG("{} is not inside dxgi.dll module - skipping", id);
+        LOG("{} is not inside dxgi.dll module - skipping", (uint32_t)id);
         return false;
     }
 
-    if (g_main->m_hooking.has_hook(id))
+    if (get_hk().m_hooking.has_hook(id))
     {
         // LOG("{} already hooked", id);
         return false;
@@ -102,20 +78,6 @@ bool check(void* addr, function_id id)
 
     return true;
 }
-
-using PresentFn = HRESULT(__stdcall*)(IDXGISwapChain* pSwapChain, UINT SyncInterval, UINT Flags);
-using CreateSwapChainFn = HRESULT(__stdcall*)(IDXGIFactory* pFactory, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain);
-
-static PresentFn          g_origPresent = nullptr;
-static CreateSwapChainFn  g_origCreateSwapChain = nullptr;
-
-static ID3D11Device* g_pd3dDevice = nullptr;
-static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
-static IDXGISwapChain* g_pSwapChain = nullptr;
-static ID3D11RenderTargetView* g_mainRTV = nullptr;
-
-static bool g_imguiInitialized = false;
-static bool g_overlayVisible = true;
 
 using create_dxgi_factory_t = HRESULT(*)(const IID& riid, void** ppFactory);
 using create_dxgi_factory1_t = HRESULT(*)(const IID& riid, void** ppFactory);
@@ -147,15 +109,6 @@ using idxgi_factory2_create_swap_chain_for_composition_t = HRESULT(*)(
     IDXGISwapChain1** ppSwapChain
 );
 
-using dxgi_swap_chain_present_t = HRESULT(*)(uintptr_t self, UINT SyncInterval, UINT Flags);
-
-HRESULT dxgi_swap_chain_present_hook(dxgi_swap_chain_present_t original, uintptr_t self, UINT SyncInterval, UINT Flags)
-{
-    LOG(" ---=== SUCCESS ===--- ");
-    auto hr = original(self, SyncInterval, Flags);
-    return hr;
-}
-
 HRESULT __fastcall idxgi_factory_create_swap_chain_hook(idxgi_factory_create_swap_chain_t original, uintptr_t self, IUnknown* pDevice, DXGI_SWAP_CHAIN_DESC* pDesc, IDXGISwapChain** ppSwapChain)
 {
     LOG("idxgi_factory_create_swap_chain_hook called");
@@ -170,7 +123,7 @@ HRESULT __fastcall idxgi_factory_create_swap_chain_hook(idxgi_factory_create_swa
         if (!check(present_addr, DXGI_SWAP_CHAIN_PRESENT))
             return hr;
 
-        g_main->m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, dxgi_swap_chain_present_hook);
+        get_hk().m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, get_hk().dxgi_swap_chain_present);
     };
 
     return hr;
@@ -190,7 +143,7 @@ HRESULT __fastcall idxgi_factory1_create_swap_chain_hook(idxgi_factory_create_sw
         if (!check(present_addr, DXGI_SWAP_CHAIN_PRESENT))
             return hr;
 
-        g_main->m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, dxgi_swap_chain_present_hook);
+        get_hk().m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, get_hk().dxgi_swap_chain_present);
     }
     return hr;
 }
@@ -215,7 +168,7 @@ HRESULT __fastcall idxgi_factory2_create_swap_chain_hook(
         if (!check(present_addr, DXGI_SWAP_CHAIN_PRESENT))
             return hr;
 
-        g_main->m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, dxgi_swap_chain_present_hook);
+        get_hk().m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, get_hk().dxgi_swap_chain_present);
     }
     return hr;
 }
@@ -241,7 +194,7 @@ HRESULT __fastcall idxgi_factory2_create_swap_chain_for_hwnd(
         if (!check(present_addr, DXGI_SWAP_CHAIN_PRESENT))
             return hr;
 
-        g_main->m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, dxgi_swap_chain_present_hook);
+        get_hk().m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, get_hk().dxgi_swap_chain_present);
     }
 
     return hr;
@@ -267,7 +220,7 @@ HRESULT __fastcall idxgi_factory2_create_swap_chain_for_core_window(
         if (!check(present_addr, DXGI_SWAP_CHAIN_PRESENT))
             return hr;
 
-        g_main->m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, dxgi_swap_chain_present_hook);
+        get_hk().m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, get_hk().dxgi_swap_chain_present);
     }
 
     return hr;
@@ -292,7 +245,7 @@ HRESULT __fastcall idxgi_factory2_create_swap_chain_for_composition(
         if (!check(present_addr, DXGI_SWAP_CHAIN_PRESENT))
             return hr;
 
-        g_main->m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, dxgi_swap_chain_present_hook);
+        get_hk().m_hooking.add_hook<DXGI_SWAP_CHAIN_PRESENT>((uintptr_t)present_addr, get_hk().dxgi_swap_chain_present);
     }
 
     return hr;
@@ -315,22 +268,22 @@ bool hook_dxgi_factory2_create_swap_chain(IUnknown* factory)
     // IDXGIFactory2::CreateSwapChain
     void* target = vtable[10];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN))
-        g_main->m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN>((uintptr_t)target, idxgi_factory2_create_swap_chain_hook);
+        get_hk().m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN>((uintptr_t)target, idxgi_factory2_create_swap_chain_hook);
 
     // IDXGIFactory2::CreateSwapChainForHwnd
     target = vtable[15];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND))
-        g_main->m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_hwnd);
+        get_hk().m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_hwnd);
 
     // IDXGIFactory2::CreateSwapChainForCoreWindow
     target = vtable[16];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW))
-        g_main->m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_core_window);
+        get_hk().m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_core_window);
 
     // IDXGIFactory2::CreateSwapChainForComposition
     target = vtable[24];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION))
-        g_main->m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_composition);
+        get_hk().m_hooking.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_composition);
 
     f2->Release();
     return true;
@@ -349,7 +302,7 @@ HRESULT create_dxgi_factory_hook(create_dxgi_factory_t original, const IID& riid
     if (!check(create_swap_chain, IDXGI_FACTORY_CREATE_SWAP_CHAIN))
         return hr;
 
-    g_main->m_hooking.add_hook<IDXGI_FACTORY_CREATE_SWAP_CHAIN>((uintptr_t)create_swap_chain, idxgi_factory_create_swap_chain_hook);
+    get_hk().m_hooking.add_hook<IDXGI_FACTORY_CREATE_SWAP_CHAIN>((uintptr_t)create_swap_chain, idxgi_factory_create_swap_chain_hook);
   
     hook_dxgi_factory2_create_swap_chain((IUnknown*)*ppFactory);
     return hr;
@@ -368,7 +321,7 @@ HRESULT create_dxgi_factory1_hook(create_dxgi_factory_t original, const IID& rii
     if (!check(create_swap_chain, IDXGI_FACTORY1_CREATE_SWAP_CHAIN))
         return hr;
 
-    g_main->m_hooking.add_hook<IDXGI_FACTORY1_CREATE_SWAP_CHAIN>((uintptr_t)create_swap_chain, idxgi_factory1_create_swap_chain_hook);
+    get_hk().m_hooking.add_hook<IDXGI_FACTORY1_CREATE_SWAP_CHAIN>((uintptr_t)create_swap_chain, idxgi_factory1_create_swap_chain_hook);
 
     hook_dxgi_factory2_create_swap_chain((IUnknown*)*ppFactory);
     return hr;
@@ -391,7 +344,7 @@ HRESULT create_dxgi_factory2_hook(create_dxgi_factory2_t original, uint32_t flag
 
 void init()
 {
-    auto& h = g_main->m_hooking;
+    auto& h = get_hk().m_hooking;
     h.init();
 
     char buf[MAX_PATH];
@@ -433,16 +386,15 @@ void init()
 	}
 
     h.add_hook<CREATE_DXGI_FACTORY2>((uintptr_t)p_create_dxgi_factory2, create_dxgi_factory2_hook);
-
 }
+
+
 
 extern "C" void init_plugin(HMODULE h_module)
 {
-    g_main = new Main;
     init();
 }
 
 extern "C" void deinit_plugin()
 {
-    delete g_main;
 }
