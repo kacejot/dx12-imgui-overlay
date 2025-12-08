@@ -4,9 +4,6 @@
 [submodule "deps/pluginloader"]
 	path = deps/pluginloader
 	url = https://github.com/kacejot/pluginloader.git
-[submodule "deps/minhook"]
-	path = deps/minhook
-	url = https://github.com/TsudaKageyu/minhook.git
 [submodule "deps/s2-hooking"]
 	path = deps/s2-hooking
 	url = https://github.com/kacejot/s2-hooking
