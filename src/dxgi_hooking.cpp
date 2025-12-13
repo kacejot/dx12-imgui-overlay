@@ -30,7 +30,7 @@ HRESULT create_dxgi_factory_hook::operator()(create_dxgi_factory_t original, con
     return hr;
 }
 
-HRESULT create_dxgi_factory1_hook::operator()(create_dxgi_factory_t original, const IID& riid, void** ppFactory)
+HRESULT create_dxgi_factory1_hook::operator()(create_dxgi_factory1_t original, const IID& riid, void** ppFactory)
 {
     LOG(" --- create factory1");
     HRESULT hr = original(riid, ppFactory);
@@ -192,9 +192,7 @@ HRESULT __fastcall idxgi_factory2_create_swap_chain_for_composition_hook::operat
 
 
 HWND hwnd = NULL;
-ID3D11Device* device;
-ID3D11DeviceContext* context;
-ID3D11RenderTargetView* targetView;
+ID3D12Device* device;
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 HRESULT dxgi_swap_chain_present_hook::operator()(dxgi_swap_chain_present_t original, IDXGISwapChain* self, UINT SyncInterval, UINT Flags)
@@ -205,7 +203,7 @@ HRESULT dxgi_swap_chain_present_hook::operator()(dxgi_swap_chain_present_t origi
 
     if (hwnd == NULL)
     {
-		LOG("  --- trying to find window");
+		LOG(" --- trying to find window");
         hwnd = FindWindowA("UnrealWindow", "S.T.A.L.K.E.R. 2: Heart of Chornobyl  ");
         if (NULL == hwnd)
         {
@@ -218,11 +216,11 @@ HRESULT dxgi_swap_chain_present_hook::operator()(dxgi_swap_chain_present_t origi
         if (NULL == wnd_proc)
             LOG(" xxx Failed to get window procedure!");
 
-        m_master.m_hk->add_hook<WND_PROC>(
+        m_master.m_hk.add_hook<WND_PROC>(
             (uintptr_t)wnd_proc,
             [](WNDPROC original, HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) -> LRESULT
             {
-                LOG(" --- window proc");
+                // LOG(" --- window proc");
 
 				auto result = original(hWnd, msg, wParam, lParam);
 
@@ -232,94 +230,19 @@ HRESULT dxgi_swap_chain_present_hook::operator()(dxgi_swap_chain_present_t origi
                 if (hWnd != hwnd)
                     return result;
 
-                ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);;
+                ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam);
 			});
         LOG(" --- found window & hooked window");
     }
 
     if (!device) {
-        LOG("  --- trying to init dx11 imgui");
-        ID3D11Texture2D* renderTarget = nullptr;
+        LOG(" --- trying to init dx12 imgui");
 
-        LOG("  --- 1");
-        auto try_get = [&](const char* name, const IID& iid) -> bool {
-            void* dev = nullptr;
-            HRESULT hr = self->GetDevice(iid, &dev);
-            LOG("GetDevice({}) -> hr=0x{:X}, dev={}", name, (uint32_t)hr, dev);
-            if (SUCCEEDED(hr) && dev != nullptr)
-            {
-                LOG("SUCCESS: swapchain is backed by {}", name);
-                ((IUnknown*)dev)->Release();
-                return true;
-            }
-            return false;
-            };
-
-        // D3D12
-        uint8_t result = 0;
-        result |= try_get("ID3D12Device", __uuidof(ID3D12Device));
-
-        // D3D11
-        result |= try_get("ID3D11Device", __uuidof(ID3D11Device));
-
-        // D3D10.x
-        result |= try_get("ID3D10Device", __uuidof(ID3D10Device));
-        result |= try_get("ID3D10Device1", __uuidof(ID3D10Device1));
-
-        // DXGI-level interfaces
-        result |= try_get("IDXGIDevice", __uuidof(IDXGIDevice));
-        result |= try_get("IDXGIDevice1", __uuidof(IDXGIDevice1));
-        result |= try_get("IDXGIDevice2", __uuidof(IDXGIDevice2));
-        result |= try_get("IDXGIDevice3", __uuidof(IDXGIDevice3));
-        result |= try_get("IDXGIDevice4", __uuidof(IDXGIDevice4));
-
-        if (!result)
-            return hr;
-
-        LOG("  --- 2");
-        device->GetImmediateContext(&context);
-
-        LOG("  --- 3");
-        self->GetBuffer(0, __uuidof(renderTarget), reinterpret_cast<void**>(&renderTarget));
-
-        LOG("  --- 4");
-        device->CreateRenderTargetView(renderTarget, nullptr, &targetView);
-
-        LOG("  --- 5");
-        renderTarget->Release();
-
-        LOG("  --- 6");
-        ImGui::CreateContext();
-
-        LOG("  --- 7");
-        ImGuiIO& io = ImGui::GetIO();
-
-        LOG("  --- 8");
-        ImGui::StyleColorsLight();
-
-        LOG("  --- 9");
-        ImGui_ImplWin32_Init(hwnd);
-
-        LOG("  --- 10");
-        ImGui_ImplDX11_Init(device, context);
-    }
-    else
-    {
-        LOG(" --- drawing ");
-        ImGui_ImplDX11_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
-
-        ImGui::SetNextWindowSize({ 800.f, 500.f });
-        ImGui::Begin("Debug");
-
-        ImGui::Text("Awesome!");
-
-        ImGui::End();
-
-        ImGui::Render();
-        context->OMSetRenderTargets(1, &targetView, nullptr);
-        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        HRESULT hr = self->GetDevice(__uuidof(ID3D12Device),  (void**)&device);
+        if (SUCCEEDED(hr) && device != nullptr)
+        {
+            LOG("SUCCESS: swapchain is backed by dx12");
+        }
     }
 
     return hr;
@@ -341,19 +264,19 @@ void dxgi_hooking::create_f2_hooks(IUnknown* factory)
 
     void* target = vtable[10];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN))
-        m_hk->add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN>((uintptr_t)target, idxgi_factory2_create_swap_chain);
+        m_hk.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN>((uintptr_t)target, idxgi_factory2_create_swap_chain);
 
     target = vtable[15];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND))
-        m_hk->add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_hwnd);
+        m_hk.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_hwnd);
 
     target = vtable[16];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW))
-        m_hk->add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_core_window);
+        m_hk.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_core_window);
 
     target = vtable[24];
     if (check(target, IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION))
-        m_hk->add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_composition);
+        m_hk.add_hook<IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION>((uintptr_t)target, idxgi_factory2_create_swap_chain_for_composition);
 
     f2->Release();
 }
@@ -366,7 +289,7 @@ bool dxgi_hooking::check(void* addr, function_id_t id)
         return false;
     }
 
-    if (m_hk->has_hook(id))
+    if (m_hk.has_hook(id))
     {
         return false;
     }

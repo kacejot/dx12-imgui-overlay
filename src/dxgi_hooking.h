@@ -8,17 +8,17 @@
 
 enum function_id_t : uint64_t
 {
-    CREATE_DXGI_FACTORY = 0,
-    CREATE_DXGI_FACTORY1 = 1,
-    CREATE_DXGI_FACTORY2 = 2,
-    IDXGI_FACTORY_CREATE_SWAP_CHAIN = 3,
-    IDXGI_FACTORY1_CREATE_SWAP_CHAIN = 4,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN = 5,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND = 6,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW = 7,
-    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION = 8,
-    DXGI_SWAP_CHAIN_PRESENT = 9,
-	WND_PROC = 10,
+    CREATE_DXGI_FACTORY = 0x100,
+    CREATE_DXGI_FACTORY1,
+    CREATE_DXGI_FACTORY2,
+    IDXGI_FACTORY_CREATE_SWAP_CHAIN,
+    IDXGI_FACTORY1_CREATE_SWAP_CHAIN,
+    IDXGI_FACTORY2_CREATE_SWAP_CHAIN,
+    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_HWND,
+    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_CORE_WINDOW,
+    IDXGI_FACTORY2_CREATE_SWAP_CHAIN_FOR_COMPOSITION,
+    DXGI_SWAP_CHAIN_PRESENT,
+	WND_PROC,
 };
 
 class dxgi_hooking;
@@ -202,8 +202,8 @@ private:
 class dxgi_hooking
 {
 public:
-    dxgi_hooking(std::unique_ptr<hooking> hk, HMODULE h, on_present_t&& on_present = {})
-        : m_hk(std::move(hk))
+    dxgi_hooking(hooking& hk, HMODULE h, on_present_t&& on_present = {})
+        : m_hk(hk)
         , m_dxgi_handle(h)
         , create_dxgi_factory(*this)
         , create_dxgi_factory1(*this)
@@ -216,8 +216,9 @@ public:
         , idxgi_factory2_create_swap_chain_for_composition(*this)
         , dxgi_swap_chain_present(*this, std::move(on_present))
     {
-		init();
 	}
+
+    void init();
 
     template <function_id_t id, typename fn, typename hook_t>
     bool try_add_hook_by_name(const char* fn_name, hook_t&& hook);
@@ -240,11 +241,10 @@ public:
     void create_f2_hooks(IUnknown* factory);
 
 private:
-	void init();
     bool is_inside_module(void* addr);
 
 public:
-    std::unique_ptr<hooking> m_hk;
+    hooking& m_hk;
 	HMODULE m_dxgi_handle;
 };
 
@@ -266,6 +266,6 @@ bool dxgi_hooking::try_add_hook(void* proc_addr, hook_t&& hook)
     if (!check(proc_addr, id))
         return false;
     
-    m_hk->add_hook<id>((uintptr_t)proc_addr, std::forward<hook_t>(hook));
+    m_hk.add_hook<id>((uintptr_t)proc_addr, std::forward<hook_t>(hook));
     return true;
 }
