@@ -10,7 +10,7 @@ void init();
 void deinit();
 void set_render_callback(render_callback_t render_callback);
 void set_toggle_key(UINT vk_code = VK_OEM_MINUS);
-void enable_logging(const char* path = "s2_overlay_log.txt");
+void enable_logging(const char* path = "dx12_overlay_log.txt");
 void disable_logging();
 
 }
