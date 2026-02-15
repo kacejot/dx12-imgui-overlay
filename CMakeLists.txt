@@ -1,9 +1,12 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(s2-overlay)
+project(dx12-imgui-overlay)
 
-add_subdirectory(deps/pluginloader)
-add_subdirectory(deps/s2-hooking)
+# Wait till minhook updates required version
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+add_subdirectory(deps/minhook)
+set(CMAKE_WARN_DEPRECATED ON CACHE BOOL "" FORCE)
+
 add_subdirectory(deps/imgui)
 
 file(GLOB sources
@@ -16,15 +19,8 @@ add_library(${PROJECT_NAME} STATIC ${sources})
 target_link_libraries(${PROJECT_NAME} PUBLIC
     minhook
     imgui
-    s2-hooking
 )
 
 target_compile_features(${PROJECT_NAME} PUBLIC
     cxx_std_20
-)
-
-pluginloader_add(winmm STANDALONE_ROLE)
-
-target_link_libraries(pluginloader_winmm PUBLIC
-    ${PROJECT_NAME}
 )

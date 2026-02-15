@@ -2,21 +2,24 @@
 #include <fstream>
 #include <format>
 
-inline std::ofstream g_log("s2_overlay_log.txt", std::ios::out | std::ios::trunc);
-
-#if 1 
+inline std::ofstream g_log;
+inline bool g_log_enabled = false;
 
 #define LOG(fmt, ...)                                                    \
     do {                                                                 \
-        if (g_log) {                                                     \
-            auto _msg = std::format(fmt, ##__VA_ARGS__);                 \
-            g_log << _msg << std::endl;                                  \
+        if (g_log_enabled && g_log) {                                    \
+            g_log << std::format(fmt, ##__VA_ARGS__) << std::endl;       \
             g_log.flush();                                               \
         }                                                                \
     } while (0)
 
-#else
+inline void enable_logging(const char* path) {
+    if (!g_log.is_open()) {
+        g_log.open(path, std::ios::out | std::ios::trunc);
+    }
+    g_log_enabled = true;
+}
 
-#define LOG(fmt, ...)
-
-#endif
+inline void disable_logging() {
+    g_log_enabled = false;
+}

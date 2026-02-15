@@ -1,9 +1,6 @@
 [submodule "deps/imgui/imgui"]
 	path = deps/imgui/imgui
 	url = https://github.com/ocornut/imgui.git
-[submodule "deps/pluginloader"]
-	path = deps/pluginloader
-	url = https://github.com/kacejot/pluginloader.git
-[submodule "deps/s2-hooking"]
-	path = deps/s2-hooking
-	url = https://github.com/kacejot/s2-hooking
+[submodule "deps/minhook"]
+	path = deps/minhook
+	url = https://github.com/TsudaKageyu/minhook.git
