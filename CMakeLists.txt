@@ -10,8 +10,8 @@ set(CMAKE_WARN_DEPRECATED ON CACHE BOOL "" FORCE)
 add_subdirectory(deps/imgui)
 
 file(GLOB sources
-    ${CMAKE_SOURCE_DIR}/src/*.cpp
-    ${CMAKE_SOURCE_DIR}/src/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h
 )
 
 add_library(${PROJECT_NAME} STATIC ${sources})
