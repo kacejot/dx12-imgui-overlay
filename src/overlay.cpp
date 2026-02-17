@@ -38,7 +38,8 @@ struct state {
     UINT                        buffer_count = 0;
     DXGI_FORMAT                 format = DXGI_FORMAT_R8G8B8A8_UNORM;
     bool                        initialized = false;
-    bool                        show_ui = true;
+    bool                        show_ui = false;
+    bool                        is_resizing = false;
 };
 
 using create_dxgi_factory_t         = HRESULT(WINAPI*)(REFIID, void**);
@@ -119,7 +120,7 @@ void release_frame_resources() {
 }
 
 void recreate_frame_resources(IDXGISwapChain3* swap_chain) {
-    if (!g_state.rtv_heap || !g_state.device || !g_state.frame_ctx)
+    if (!g_state.rtv_heap || !g_state.device || !g_state.frame_ctx || !swap_chain)
         return;
 
     UINT rtv_size = g_state.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -128,9 +129,10 @@ void recreate_frame_resources(IDXGISwapChain3* swap_chain) {
     for (UINT i = 0; i < g_state.buffer_count; i++) {
         g_state.frame_ctx[i].rtv_handle = rtv_handle;
         ID3D12Resource* buf = nullptr;
-        swap_chain->GetBuffer(i, IID_PPV_ARGS(&buf));
-        g_state.device->CreateRenderTargetView(buf, nullptr, rtv_handle);
-        g_state.frame_ctx[i].back_buffer = buf;
+        if (SUCCEEDED(swap_chain->GetBuffer(i, IID_PPV_ARGS(&buf))) && buf) {
+            g_state.device->CreateRenderTargetView(buf, nullptr, rtv_handle);
+            g_state.frame_ctx[i].back_buffer = buf;
+        }
         rtv_handle.ptr += rtv_size;
     }
 }
@@ -254,15 +256,24 @@ HRESULT STDMETHODCALLTYPE hook_present(IDXGISwapChain3* self, UINT SyncInterval,
         LOG(" --- DX12 ImGui initialized successfully");
     }
 
+    // Skip rendering during resize to avoid race conditions
+    if (g_state.is_resizing)
+        return g_orig_present(self, SyncInterval, Flags);
+
     if (g_render_callback && g_state.command_queue && g_state.initialized && g_state.show_ui) {
+        UINT idx = self->GetCurrentBackBufferIndex();
+        if (idx >= g_state.buffer_count)
+            return g_orig_present(self, SyncInterval, Flags);
+
+        frame_context& ctx = g_state.frame_ctx[idx];
+        if (!ctx.back_buffer || !ctx.command_allocator)
+            return g_orig_present(self, SyncInterval, Flags);
+
         ImGui_ImplDX12_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
         g_render_callback(self, SyncInterval, Flags);
-
-        UINT idx = self->GetCurrentBackBufferIndex();
-        frame_context& ctx = g_state.frame_ctx[idx];
 
         if (ctx.fence_value != 0 && g_state.fence->GetCompletedValue() < ctx.fence_value) {
             g_state.fence->SetEventOnCompletion(ctx.fence_value, g_state.fence_event);
@@ -303,12 +314,16 @@ HRESULT STDMETHODCALLTYPE hook_present(IDXGISwapChain3* self, UINT SyncInterval,
 HRESULT STDMETHODCALLTYPE hook_resize_buffers(
     IDXGISwapChain* self, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags)
 {
-    LOG(" --- ResizeBuffers {}x{}", Width, Height);
+    LOG(" --- ResizeBuffers: {}x{}", Width, Height);
+
+    // Block rendering during resize
+    g_state.is_resizing = true;
 
     if (g_state.initialized) {
         wait_for_gpu();
+        ImGui_ImplDX12_Shutdown();
+        ImGui_ImplWin32_Shutdown();
         release_frame_resources();
-        ImGui_ImplDX12_InvalidateDeviceObjects();
     }
 
     HRESULT hr = g_orig_resize_buffers(self, BufferCount, Width, Height, NewFormat, SwapChainFlags);
@@ -324,8 +339,22 @@ HRESULT STDMETHODCALLTYPE hook_resize_buffers(
             recreate_frame_resources(sc3);
             sc3->Release();
         }
+
+        // Reinitialize ImGui backends with new buffer configuration
+        ImGui_ImplWin32_Init(g_state.hwnd);
+        ImGui_ImplDX12_Init(
+            g_state.device,
+            g_state.buffer_count,
+            g_state.format,
+            g_state.srv_heap,
+            g_state.srv_heap->GetCPUDescriptorHandleForHeapStart(),
+            g_state.srv_heap->GetGPUDescriptorHandleForHeapStart()
+        );
         ImGui_ImplDX12_CreateDeviceObjects();
     }
+
+    // Unblock rendering
+    g_state.is_resizing = false;
 
     return hr;
 }
