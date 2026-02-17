@@ -50,10 +50,11 @@ using create_swap_chain_for_hwnd_t  = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*
 using present_t                     = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain3*, UINT, UINT);
 using resize_buffers_t              = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT, DXGI_FORMAT, UINT);
 
-state             g_state;
-render_callback_t g_render_callback = nullptr;
-HMODULE           g_dxgi_handle = nullptr;
-UINT              g_toggle_key = VK_OEM_MINUS;
+state                    g_state;
+render_callback_t        g_render_callback = nullptr;
+font_config_callback_t   g_font_config_callback = nullptr;
+HMODULE                  g_dxgi_handle = nullptr;
+UINT                     g_toggle_key = VK_OEM_MINUS;
 
 create_dxgi_factory_t         g_orig_create_dxgi_factory = nullptr;
 create_dxgi_factory1_t        g_orig_create_dxgi_factory1 = nullptr;
@@ -172,6 +173,9 @@ HRESULT STDMETHODCALLTYPE hook_present(IDXGISwapChain3* self, UINT SyncInterval,
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.MouseDrawCursor = true;
+
+        if (g_font_config_callback)
+            g_font_config_callback();
 
         LOG(" --- Initializing DX12 ImGui");
 
@@ -484,6 +488,10 @@ void deinit() {
 
 void set_render_callback(render_callback_t render_callback) {
     g_render_callback = render_callback;
+}
+
+void set_font_config_callback(font_config_callback_t callback) {
+    g_font_config_callback = callback;
 }
 
 void set_toggle_key(UINT vk_code) {
